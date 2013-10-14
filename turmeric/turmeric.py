@@ -9,7 +9,7 @@ import datetime
 import logging
 logger = logging.getLogger("scripts.createdb")
 logging.basicConfig(stream=sys.stdout, level=10, format = "%(message)s")
-root = "./"
+
 import sqlalchemy
 from sqlalchemy.engine.url import make_url, URL
 
@@ -52,8 +52,9 @@ The clean, drop, restore, populate commands automatically make a backup prior to
 """
 
 class DBManager(object):
-    def __init__(self, url, settings = dict(), adminuser = DEFAULTADMINUSER, hostname = None, port = None, password = None):
-        self.settings = settings
+    valid_commands = ( "info", "backup","restore", "init", "populate", "drop","show", "clean", "dump", "setup")
+    
+    def __init__(self, url, root ="", adminuser = DEFAULTADMINUSER, hostname = None, port = None, password = None, message = ""):
         self.adminuser = adminuser
         dburl = url
         url = make_url(dburl)
@@ -67,15 +68,27 @@ class DBManager(object):
                          password = password, host = hostname, port = port)
         self.admin_conn = None
         self.target_conn = None
-
+        self.root = root
+        self.message = message
         self.backup_path = os.path.join(root, "var/backup")
-        logger.warn("Using destination URI %s", url)
-        logger.warn("Using admin URI %s", self.admin_url)
+        self.logger = logger
         
+        self.progress("Using destination URI %s", url)
+        self.progress("Using admin URI %s", self.admin_url)
+        
+    def progress(self, message, *args, **kwargs):
+        self.logger.info(" * " + message +"\n",  *args, **kwargs)
+        
+    def perform_command(self, cmd, *args, **kwargs):
+        if cmd in self.valid_commands:
+            getattr(self, "turmeric_" + cmd)(*args, **kwargs)
+        else:
+            raise NotImplementedError("Command %s is not implemented" % cmd)
+            
     def connect_dbadmin(self):
         if self.admin_conn and not self.admin_conn.closed:
             return self.admin_conn
-        logger.info("Connecting as admin user %s to %s on %s", self.admin_url.username, "postgres", self.admin_url.host)
+        self.progress("Connecting as admin user %s to %s on %s", self.admin_url.username, "postgres", self.admin_url.host)
         engine = sqlalchemy.create_engine(self.admin_url) #"postgres://%s@/postgres" % self.adminuser ) 
         conn = engine.connect()
         conn.execute("COMMIT")
@@ -85,7 +98,7 @@ class DBManager(object):
     def connect_target(self):
         if self.target_conn and not self.target_conn.closed:
             return self.target_conn
-        logger.info("Connecting as user %s to %s on %s", self.target_url.username, self.target_url.database, self.target_url.host)
+        self.progress("Connecting as user %s to %s on %s", self.target_url.username, self.target_url.database, self.target_url.host)
         engine = sqlalchemy.create_engine(self.target_url)
         conn = engine.connect()
         conn.execute("COMMIT")
@@ -105,7 +118,7 @@ class DBManager(object):
         
     def create_user(self):
         conn = self.connect_dbadmin()
-        logger.info("Creating database user %s with password %s", self.target_url.username, self.target_url.password)
+        self.progress("Creating database user %s with password %s", self.target_url.username, self.target_url.password)
         result = conn.execute("CREATE USER %s WITH PASSWORD '%s'" % (self.target_url.username, self.target_url.password) )
         if not result.rowcount :
             raise "Could not create user %s" % self.target_url.username
@@ -113,7 +126,7 @@ class DBManager(object):
 
     def create_db(self):
         conn = self.connect_dbadmin()
-        logger.info("Creating database %s with owner %s", self.target_url.database, self.target_url.username)
+        self.progress("Creating database %s with owner %s", self.target_url.database, self.target_url.username)
         result = conn.execute("CREATE DATABASE %s WITH OWNER %s" % (self.target_url.database, self.target_url.username) )
         if not result.rowcount :
             raise "Could not create database %s" % self.target_url.database
@@ -121,24 +134,25 @@ class DBManager(object):
 
     def grant_user(self):
         conn = self.connect_dbadmin()
-        logger.info("Granting privileges to user %s", self.target_url.username)
+        self.progress("Granting privileges to user %s", self.target_url.username)
         result = conn.execute("GRANT ALL PRIVILEGES ON DATABASE %s TO %s" % (self.target_url.database, self.target_url.username))
         if not result.rowcount :
             raise "Could not grant privileges to user %s" % self.target_url.username
 
-
+        
+            
     def make_gis(self):
         url = URL( drivername = "postgres",  username = self.adminuser, database=self.target_url.database,
                          password = self.admin_url.password, host = self.admin_url.host, port = self.admin_url.port)
         engine = sqlalchemy.create_engine(url)
         conn = engine.connect()
         #conn = self.connect_target()
-        logger.info("Creating extension postgis")
+        self.progress("Creating extension postgis")
         result = conn.execute("CREATE EXTENSION IF NOT EXISTS postgis")
         if not result.rowcount :
             raise "Could not create postgis extension"
 
-        logger.info("Creating extension postgis_topology")
+        self.progress("Creating extension postgis_topology")
         result = conn.execute("CREATE EXTENSION IF NOT EXISTS postgis_topology")
         if not result.rowcount :
             raise "Could not create postgis_topology extension"
@@ -147,7 +161,7 @@ class DBManager(object):
         for tab in ("spatial_ref_sys", "topology","layer"):
             result = conn.execute("ALTER TABLE %s OWNER TO %s " % (tab, self.target_url.username))
 
-    def setup_db(self):
+    def turmetic_setup(self):
         self.safe_create_user()
         
         self.safe_create_db()
@@ -170,8 +184,19 @@ class DBManager(object):
             self.create_db()
 
 
-    def backup(self, message = "organic backup"):
-        gitversion = subprocess.check_output(["git","describe","--long"]).split("\n")[0].strip()
+    def turmeric_backup(self):
+        return self.backup(message = self.message or "organic backup")
+
+    def get_version(self):
+        try:
+            installed_version = subprocess.check_output(["git","describe","--long"]).split("\n")[0].strip()
+        except:
+            installed_version = open(os.path.join(self.root,"VERSION")).read()
+        return installed_version
+        
+    def backup(self, message):
+        installed_version = self.get_version()
+        
         datestr = datetime.datetime.utcnow().isoformat()
         if not os.path.exists(self.backup_path):
             os.mkdir(self.backup_path)
@@ -187,14 +212,19 @@ class DBManager(object):
 
         env = dict(os.environ)
         env["PGPASSWORD"]  = self.target_url.password  ## SECURITY RISK?
-        backupfn = os.path.join(self.backup_path,"db__%s__%s__%s__%s.sql" % (self.target_url.database, datestr, gitversion, message ) )
+        backupfn = os.path.join(self.backup_path,"db__%s__%s__%s__%s.sql" % (self.target_url.database, datestr, installed_version, message ) )
         args = ["pg_dump"] + hostargs + ["--format=c",  self.target_url.database]
-        logger.info("Backing up Database %s (%s)", self.target_url.database, hostargs)
-        logger.info("Calling: " + " ".join(args))
+        self.progress("Backing up Database %s (%s)", self.target_url.database, hostargs)
+        self.progress("Calling: " + " ".join(args))
         err = tempfile.NamedTemporaryFile()
         subprocess.call(args, env=env, stdout = open(backupfn,"w"), stderr = err)
+        self.progress("Backup writen to %s", backupfn)
 
-    def restore(self, backup):
+        data = [ backupfn.split("__") ]
+        self._show_options(data)
+        
+        
+    def turmeric_restore(self, backup):
         backup_f = None
         options = self.find_backups(True)
         for option in options:
@@ -210,9 +240,9 @@ class DBManager(object):
                 break
 
         if not backup_f:
-            logger.info("Could not find the specified backup file using %s", backup)
+            self.progress("Could not find the specified backup file using %s", backup)
             return
-        logger.info("Restoring %s to %s", backup_f, self.target_url.database)
+        self.progress("Restoring %s to %s", backup_f, self.target_url.database)
         hostargs = []
         if self.target_url.host:
             hostargs += ["--host=%s" % self.target_url.host]
@@ -223,7 +253,7 @@ class DBManager(object):
 
         try:
             conn = self.connect_target()
-            self.backup("before restore")
+            self.backup("before restore: %s" % self.message)
         except:
             self.safe_create_user()
         
@@ -235,8 +265,8 @@ class DBManager(object):
         env["PGPASSWORD"]  = self.target_url.password  ## SECURITY RISK?
 
         args = ["pg_restore", "-d", self.target_url.database] + hostargs 
-        logger.info("Restoring database %s (%s)", self.target_url.database, hostargs)
-        logger.info("Calling: " + " ".join(args))
+        self.progress("Restoring database %s (%s)", self.target_url.database, hostargs)
+        self.progress("Calling: " + " ".join(args))
 
         datafp = open(os.path.join(self.backup_path, backup_f),"r")
         log = tempfile.NamedTemporaryFile()
@@ -244,25 +274,25 @@ class DBManager(object):
         p = subprocess.call(args, env=env, stdin = datafp, stdout = log, stderr = err)
 
         
-    def dropdb(self, backup = True):
+    def turmeric_dropdb(self, backup = True):
         if backup:
-            self.backup("before drop")
+            self.backup("before drop: %s" % self.message)
         conn = self.connect(database = "postgres")
-        logger.info("Dropping database %s", self.target_url.database)
+        self.progress("Dropping database %s", self.target_url.database)
         result = conn.execute("DROP DATABASE %s" % self.target_url.database)
         if not result.rowcount :
             raise "Could not create database %s" % self.target_url.database
         conn.close()
 
-    def info(self):
+    def turmeric_info(self):
         conn = self.connect_target()
         result1 = conn.execute("SELECT usename FROM pg_user WHERE usename = '%s' " % self.target_url.username)
         if result1.rowcount :
-            logger.info("Database user %s exists", self.target_url.username)
+            self.progress("Database user %s exists", self.target_url.username)
         
         result2 = conn.execute("SELECT datname FROM pg_database WHERE datname = '%s' " %  self.target_url.database)
         if result2.rowcount:
-            logger.info("Database %s exists", self.target_url.database)
+            self.progress("Database %s exists", self.target_url.database)
 
         if result1.rowcount and result2.rowcount:
             try:
@@ -270,17 +300,23 @@ class DBManager(object):
             except:
                 logger.warn("Could not connect to database %s", self.target_url.database)
             else:
-                logger.info("Connection to database %s ok", self.target_url.database)
+                self.progress("Connection to database %s ok", self.target_url.database)
 
         options = self.find_backups()
+        print("The following backups were found:" )
         self._show_options(options)
         
 
-    def show(self):
+    def turmeric_show(self, hash=None):
         options = self.find_backups(True)
-        self._show_options(options)
+        if hash:
+            options = [o for o in options if self._hash_option(o).startswith(hash)]
+            self._show_options(options)
+        else:
+            print("The following backups were found:" )
+            self._show_options(options)
 
-    def populate(self):
+    def turmeric_populate(self):
         raise NotImplementedError
         
     @staticmethod
@@ -290,15 +326,14 @@ class DBManager(object):
     def _show_options(self, options):
         if options:
             from babel.dates import format_datetime
-            logger.info("The following backups were found:" )
-            logger.info("Hash".ljust(7) + "Database".ljust(21) + "Date".ljust(31) + "Size".rjust(9) + " GIT version".ljust(22) + "Message")
+            print("Hash".ljust(7) + "Database".ljust(21) + "Date".ljust(31) + "Size".rjust(9) + " Version".ljust(22) + "Message")
             for opt in options:
                 dt = datetime.datetime.strptime(opt[1], "%Y-%m-%dT%H:%M:%S.%f")
                 sz = os.path.getsize(os.path.join(self.backup_path, opt[4]))
-                logger.info( "%-6s %-20s %-30s %9d %-20s %s" % (self._hash_option(opt), opt[0], format_datetime(dt),
+                print( "%-6s %-20s %-30s %9d %-20s %s" % (self._hash_option(opt), opt[0], format_datetime(dt),
                                                                 sz, opt[2], opt[3]) )
         else:
-            logger.info("No backups were found")
+            print("No backups were found")
         
             
     def find_backups(self, all = False):
@@ -322,8 +357,8 @@ class DBManager(object):
         options.sort(key = lambda x:(x[0],x[1]), reverse=True) # order by date
         return options
 
-    def clean(self):
-        self.backup("before clean")
+    def turmeric_clean(self):
+        self.backup("before clean: %s" % self.message)
         conn = self.connect_target()
 
         engine = conn.engine
@@ -332,57 +367,51 @@ class DBManager(object):
         metadata.bind = engine
         metadata.drop_all()
     
-
-
 def main(argv=sys.argv, quiet = False):
-    options, args = getopt.gnu_getopt( argv[1:], "W", [ "adminuser=", "hostname=", "port=", "url="])
-                                      
-    opts = dict( [ (k[2:],v) for k,v in options if k.startswith("--")] )
+    from argparse import ArgumentParser
 
-    if ("-W" in [k for k,v in options]):
-        opts['password'] = getpass.getpass("Password for database user %s" % (opts.get('adminuser') or DEFAULTADMINUSER) )
+    parser = ArgumentParser(description= """
+                            A SQLAlchemy based database management tool. Turmeric supports creation, initialisation, populating and backup up databases.
+                            """)
+    parser.add_argument("command", help = "Command to perform ", default = "info")
+    parser.add_argument("arguments", nargs ="*", help = "arguments to pass on to the command", default = [] )
+    parser.add_argument("--config", help = "INI-file with a [turmeric] section", default = "app.ini")
+    parser.add_argument("--adminuser", help = "name of user with administrator rights", default = "postgres")
+    parser.add_argument("--hostname", help = "host to connect to", default = "localhost")
+    parser.add_argument("--port", help = "port to connect to ")
+    parser.add_argument("--url", help = "Target database uri (overrides the one in the config.ini file)", )
+    parser.add_argument("--root", help = "Target directory. Backups are stored in <root>/var/backup/", )
+    parser.add_argument("--message", "-m", help = "Commit message")
+    parser.add_argument("-W", dest = "askpw", help = "Ask for password", type = bool, default = False)
+    
+    opts = parser.parse_args()
 
-    url = opts.pop('url', None)
-
-    global root
-    if args:
-        from ConfigParser import SafeConfigParser
-        cfg = args[0]
-        parser = SafeConfigParser(dict(here=os.path.dirname(os.path.abspath(cfg)) ))
-        parser.read(cfg)
-        settings = dict(parser.items("dbmanage"))
-        #settings = get_appsettings(cfg)
-        root = settings.get("root", os.path.dirname(os.path.abspath(cfg)))
-        if not url:
-            url = settings.get('sqlalchemy.url')
+    if opts.askpw:
+        opts.password = getpass.getpass("Password for database user %s" % (opts.adminuser or DEFAULTADMINUSER) )
     else:
-        root = "./"
-        settings = {}
-    cmd = args[1] if len(args)>1 else "info"
+        opts.password = ""
+        
+    from ConfigParser import SafeConfigParser, NoSectionError
+    parser = SafeConfigParser(dict(here=os.path.dirname(os.path.abspath(opts.config)) ))
+    parser.read(opts.config)
+        
+    try:
+        settings = dict(parser.items("turmeric"))
+    except NoSectionError:
+        try:
+            settings = dict(parser.items("dbmanage"))
+        except:
+            settings = {}
+            
+    if not opts.root:
+        opts.root = settings.get("root", os.path.dirname(os.path.abspath(opts.config)))
+    if not opts.url:
+        opts.url = settings.get('sqlalchemy.url')
 
-    if not url:
+    if not opts.url:
         print "Please specify a configuration file or a sqlalchemy db-uri"
         return 0
 
-    manager = DBManager(url, settings = settings, **opts)
-    if cmd == "setup":
-        manager.setup_db()
-    elif cmd in ("dump", "backup"):
-        manager.backup(message = args[2] if len(args)>2 else "organic backup" )
-    elif cmd == "restore":
-        manager.restore(args[2])
-    elif cmd == "drop":
-        manager.dropdb()
-    elif cmd == "info":
-        manager.info()
-    elif cmd == "show":
-        manager.show()
-    elif cmd == "populate":
-        manager.populate(*args[2:])
-    elif cmd == "clean":
-        manager.clean()
-    elif cmd == "help":
-        print __help % dict(cmd = argv[0])
-    else:
-        logger.warn("Command %s is not recognized", cmd)
-    
+    manager = DBManager(opts.url, root = opts.root, message = opts.message, adminuser = opts.adminuser, port = opts.port, hostname = opts.hostname, password = opts.password)
+
+    return manager.perform_command( opts.command, *opts.arguments)
