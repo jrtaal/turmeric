@@ -22,35 +22,6 @@ logger = logging.getLogger("create_db")
 import hashlib
 import tempfile
 
-__help = """
-%(cmd)s <config> <command> [-W] [--adminuser=<adminusername>] [--hostname=<hostname] [--port=<port>] [--url=<url>]
-
-config should be a paste config file. Can be suffixed with #<name> to find the right section.
-
-Command can be:
-    drop                    Drop a database
-    setup                   Create a new database, with the right credentials
-
-    backup|dump             Make a backup
-    restore <signature>     Restore a backup described by signature
-
-    info                    Show information about the current state
-    show                    Show a list of available backups
-
-    populate  [test|large]
-                            Populate a database with initial information. If test or large is provided fake data is ingested, large gives a larger set
-    clean                   Cleans a database.
-
-The clean, drop, restore, populate commands automatically make a backup prior to carrying out the task to prevent errors.
-
-    --adminuser=<adminusername>  the postgres adminuser with sufficient rights to create and drop databases
-    --hostname=<hostname>        the hostname of the postgres server, if empty localhost is used
-    --port=<port>                the portnumber of the postgres server
-    --url=<url>                  the target database-uri (overrides the one found in the configfile) 
-    -W                           asks for a password for the admin user
-
-"""
-
 class DBManager(object):
     valid_commands = ( "info", "backup","restore", "init", "populate", "drop","show", "clean", "dump", "setup")
     
@@ -370,10 +341,11 @@ class DBManager(object):
 def main(argv=sys.argv, quiet = False):
     from argparse import ArgumentParser
 
-    parser = ArgumentParser(description= """
-                            A SQLAlchemy based database management tool. Turmeric supports creation, initialisation, populating and backup up databases.
+    parser = ArgumentParser(description= """A database management tool. Turmeric supports creation, initialisation, populating and backup up databases.
                             """)
-    parser.add_argument("command", help = "Command to perform ", default = "info")
+    parser.add_argument("command", help = "Command to perform.",
+                        choices = DBManager.valid_commands,
+                        default = "info")
     parser.add_argument("arguments", nargs ="*", help = "arguments to pass on to the command", default = [] )
     parser.add_argument("--config", help = "INI-file with a [turmeric] section", default = "app.ini")
     parser.add_argument("--adminuser", help = "name of user with administrator rights", default = "postgres")
