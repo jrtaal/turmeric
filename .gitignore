@@ -1,0 +1,12 @@
+bin/
+build/
+dist/
+lib/
+local/
+include/
+*~
+*.pyc
+*.pyo
+*.egg
+*.log
+*.egg-info/
