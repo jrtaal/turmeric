@@ -159,10 +159,22 @@ class DBManager(object):
         return self.backup(message = self.message or "organic backup")
 
     def get_version(self):
+        installed_version = None
         try:
-            installed_version = subprocess.check_output(["git","describe","--long"]).split("\n")[0].strip()
+            import gitversion
+            installed_version = gitversion.get_git_version()
         except:
-            installed_version = open(os.path.join(self.root,"VERSION")).read()
+            pass
+        if not installed_version:
+            try:
+                installed_version = subprocess.check_output(["git","describe","--long"]).split("\n")[0].strip()
+            except:
+                pass
+        if not installed_version:
+            try:
+                installed_version = open(os.path.join(self.root,"RELEASE-VERSION")).read()
+            except:
+                installed_version = "dev"
         return installed_version
         
     def backup(self, message):
@@ -191,7 +203,7 @@ class DBManager(object):
         subprocess.call(args, env=env, stdout = open(backupfn,"w"), stderr = err)
         self.progress("Backup writen to %s", backupfn)
 
-        data = [ backupfn.split("__") ]
+        data = [  (self.target_url.database, datestr, installed_version, message, backupfn ) ]
         self._show_options(data)
         
         
