@@ -8,7 +8,7 @@ def read(fname):
     
 setup(
     name = "turmeric",
-    version = "1.0",
+    version = "1.1",
     author = "Jacco Taal",
     author_email = "jacco@bitnomica.com",
     description = ("""Turmeric is  database management tool to
