@@ -10,3 +10,4 @@ include/
 *.egg
 *.log
 *.egg-info/
+RELEASE-VERSION
