@@ -23,9 +23,22 @@ import hashlib
 import tempfile
 
 class DBManager(object):
-    valid_commands = ( "info", "backup","restore", "init", "populate", "drop","show", "clean", "dump", "setup")
+    valid_commands = ( "info", "backup","restore",  "populate", "drop","show", "clean", "dump", "setup")
     
     def __init__(self, url, root ="", adminuser = DEFAULTADMINUSER, hostname = None, port = None, password = None, message = ""):
+        """
+        Required:
+        url: database url
+
+        Optional:
+        root
+        adminuser
+        hostname
+        port
+        password
+        message
+        
+        """
         self.adminuser = adminuser
         dburl = url
         url = make_url(dburl)
@@ -132,7 +145,7 @@ class DBManager(object):
         for tab in ("spatial_ref_sys", "topology","layer"):
             result = conn.execute("ALTER TABLE %s OWNER TO %s " % (tab, self.target_url.username))
 
-    def turmetic_setup(self):
+    def turmeric_setup(self):
         self.safe_create_user()
         
         self.safe_create_db()
